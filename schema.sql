@@ -7,7 +7,7 @@ CREATE TABLE prospect_qualifications (
     qualifies       BOOLEAN NOT NULL,
 
     matched_by      TEXT,
-    matched_with     TEXT CHECK (matched_via IN ('DIRECT', 'REGION', 'NONE')),
+    matched_with     TEXT CHECK (matched_with IN ('DIRECT', 'REGION', 'NONE')),
 
     evaluated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

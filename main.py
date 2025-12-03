@@ -8,10 +8,12 @@ async def main() -> None:
     inspector_initiator = InspectorInitiator()
     inspector = inspector_initiator.initiate()
     inspected_prospects = inspector.inspect_users_prospects()
-    print(inspected_prospects)
 
-    # Insert to postgres
-    await inspector.insert_inspected_prospects(inspected_prospects)
+    # Exporting the result to csv
+    inspector.export_inspected_prospects_to_csv(inspected_prospects)
+
+    # I encountered issues running Docker on my machine, so I wasn’t able to fully validate this function. :(
+    # await inspector.insert_inspected_prospects_to_postgres(inspected_prospects)
 
 
 if __name__ == "__main__":

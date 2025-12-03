@@ -1,3 +1,4 @@
+import csv
 from datetime import datetime
 from collections import defaultdict
 from itertools import chain
@@ -39,7 +40,7 @@ class InspectorService:
         self._country_to_region = country_to_region
         self._prospects = prospects
 
-    async def insert_inspected_prospects(self, prospects: list[InspectedProspect]) -> None:
+    async def insert_inspected_prospects_to_postgres(self, prospects: list[InspectedProspect]) -> None:
         """update selected prospects via postgres accessor"""
         records = [
             (
@@ -52,11 +53,27 @@ class InspectorService:
             )
             for prospect in prospects
         ]
-        try:
-            async with self._postgres_accessor.acquire() as conn:
-                await conn.executemany(POSTGRES_INSERT_QUERY, records)
-        except Exception:
-            raise Exception("Failed to insert prospects")
+        async with self._postgres_accessor.acquire() as conn:
+            await conn.executemany(POSTGRES_INSERT_QUERY, records)
+    @staticmethod
+    def export_inspected_prospects_to_csv(prospects: list[InspectedProspect]) -> None:
+        """Export a list of InspectedProspect objects into a CSV file."""
+
+        fieldnames = list(InspectedProspect.model_fields.keys())
+
+        with open('./inspected_prospects.csv', "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for item in prospects:
+                writer.writerow({
+                    "user_id": item.user_id,
+                    "prospect_id": item.prospect_id,
+                    "qualifies": item.qualifies,
+                    "matched_with": ",".join(item.matched_with or []),
+                    "matched_by": ",".join([m.value for m in (item.matched_by or [])]),
+                    "evaluated_at": item.evaluated_at.isoformat(),
+                })
 
     def _check_prospect_locations(self, user_settings: UserLocationSettings,
                                   prospect_locations: list[str]) -> dict[ProspectMatch, set[str]] | None:
@@ -79,11 +96,12 @@ class InspectorService:
         return matches
 
     @staticmethod
-    def _create_inspected_prospects(relevant_prospects_to_user: dict[str, dict[str, dict[ProspectMatch, set[str]]]]) -> list[InspectedProspect]:
+    def _create_inspected_prospects(relevant_prospects_to_user: dict[str, dict[str, dict[ProspectMatch, set[str]]]]) -> \
+    list[InspectedProspect]:
         """Create inspected prospect object"""
         inspected_prospects = []
         for user_id, prospect_status in relevant_prospects_to_user.items():
-            prospect_id =list(prospect_status.keys())[0]
+            prospect_id = list(prospect_status.keys())[0]
             matched_by = list(prospect_status[prospect_id].keys())
             matched_with = list(prospect_status[prospect_id].values())
             inspected_prospects.append(
@@ -91,13 +109,12 @@ class InspectorService:
                     user_id=user_id,
                     prospect_id=prospect_id,
                     qualifies=True if ProspectMatch.NONE not in matched_by else False,
-                    matched_with = list(chain.from_iterable(matched_with)) if matched_with[0] else None,
+                    matched_with=list(chain.from_iterable(matched_with)) if matched_with[0] else None,
                     matched_by=matched_by,
                     evaluated_at=datetime.now(),
                 )
             )
         return inspected_prospects
-
 
     def inspect_users_prospects(self) -> list[InspectedProspect]:
         """Select prospects based on user location settings."""

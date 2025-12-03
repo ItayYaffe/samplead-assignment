@@ -8,7 +8,7 @@ class PostgresConfig(BaseSettings):
     Attributes:
         postgres_dsn: Postgres DSN
     """
-    postgres_dsn: str = "postgresql://postgres:postgres@localhost:5432/app_db"
+    postgres_dsn: str = "postgresql://postgres:postgres@localhost:5432/samplead"
 
 
 POSTGRES_INSERT_QUERY = """
