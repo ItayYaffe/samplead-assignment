@@ -52,9 +52,11 @@ class InspectorService:
             )
             for prospect in prospects
         ]
-
-        async with self._postgres_accessor.acquire() as conn:
-            await conn.executemany(POSTGRES_INSERT_QUERY, records)
+        try:
+            async with self._postgres_accessor.acquire() as conn:
+                await conn.executemany(POSTGRES_INSERT_QUERY, records)
+        except Exception:
+            raise Exception("Failed to insert prospects")
 
     def _check_prospect_locations(self, user_settings: UserLocationSettings,
                                   prospect_locations: list[str]) -> dict[ProspectMatch, set[str]] | None:
