@@ -1,44 +1,105 @@
+from datetime import datetime
 from collections import defaultdict
+from itertools import chain
 
-from accessors.postgres_accessor import PostgresAccessor
-from models.prospect import Prospect
+import asyncpg
+
+from configurations.postgress_config import POSTGRES_INSERT_QUERY
+from models.prospect import Prospect, ProspectMatch, InspectedProspect
 from models.user_location_settings import UserLocationSettings
 
 
 class InspectorService:
     def __init__(self,
-                 postgres_accessor: PostgresAccessor,
+                 postgres_accessor: asyncpg.Pool,
                  country_to_region: dict[str, list[str]],
                  users_locations_settings: dict[str, dict[str, list[str]]],
                  prospects: list[Prospect]) -> None:
+        """Initialize the service with database access and input data.
+
+        Args:
+            postgres_accessor:
+                A connection pool (asyncpg.Pool) used for executing INSERT
+                operations into PostgresSQL.
+
+            country_to_region:
+                Country-to-region mapping. Keys are country codes,
+                values are lists of regions that contain that country.
+
+            users_locations_settings:
+                Raw location settings per user. Each key is a user_id, and the
+                value is a dict that can be unpacked into UserLocationSettings.
+
+            prospects:
+                A list of Prospect objects representing the prospects that
+                should be inspected for qualification.
+        """
         self._postgres_accessor = postgres_accessor
         self._users_locations_settings = users_locations_settings
         self._country_to_region = country_to_region
         self._prospects = prospects
 
-    async def update_selected_prospects(self) -> Prospect:
+    async def insert_inspected_prospects(self, prospects: list[InspectedProspect]) -> None:
         """update selected prospects via postgres accessor"""
-        pass
+        records = [
+            (
+                prospect.user_id,
+                prospect.prospect_id,
+                prospect.qualifies,
+                prospect.matched_with or [],
+                [m.value for m in (prospect.matched_by or [])],
+                prospect.evaluated_at,
+            )
+            for prospect in prospects
+        ]
 
-    @staticmethod
-    def _check_prospect_locations(user_settings: UserLocationSettings, prospect_locations: list[str]) -> bool:
+        async with self._postgres_accessor.acquire() as conn:
+            await conn.executemany(POSTGRES_INSERT_QUERY, records)
+
+    def _check_prospect_locations(self, user_settings: UserLocationSettings,
+                                  prospect_locations: list[str]) -> dict[ProspectMatch, set[str]] | None:
         """Check if prospect locations included in user locations settings"""
-        if not set(prospect_locations).isdisjoint(user_settings.location_include) and set(
-                prospect_locations).isdisjoint(user_settings.location_exclude):
-            return True
-        return False
-
-    def _validate_region(self, user_settings: UserLocationSettings, prospect_locations: list[str]) -> bool:
-        """Validate prospect region"""
+        matches = {}
+        regions = []
         for location in prospect_locations:
             if self._country_to_region.get(location, None):
-                if self._check_prospect_locations(user_settings, self._country_to_region[location]):
-                    return True
-        return False
+                regions.extend(self._country_to_region[location])
 
-    def inspect_users_prospects(self) -> dict[str, dict[str, bool]]:
+        if not set(prospect_locations).isdisjoint(user_settings.location_exclude):
+            return None
+
+        elif not set(prospect_locations).isdisjoint(user_settings.location_include):
+            matches[ProspectMatch.DISTRICT] = set(prospect_locations).intersection(user_settings.location_include)
+        elif not set(regions).isdisjoint(user_settings.location_include):
+            matches[ProspectMatch.REGION] = set(regions).intersection(user_settings.location_include)
+        else:
+            matches[ProspectMatch.NONE] = None
+        return matches
+
+    @staticmethod
+    def _create_inspected_prospects(relevant_prospects_to_user: dict[str, dict[str, dict[ProspectMatch, set[str]]]]) -> list[InspectedProspect]:
+        """Create inspected prospect object"""
+        inspected_prospects = []
+        for user_id, prospect_status in relevant_prospects_to_user.items():
+            prospect_id =list(prospect_status.keys())[0]
+            matched_by = list(prospect_status[prospect_id].keys())
+            matched_with = list(prospect_status[prospect_id].values())
+            inspected_prospects.append(
+                InspectedProspect(
+                    user_id=user_id,
+                    prospect_id=prospect_id,
+                    qualifies=True if ProspectMatch.NONE not in matched_by else False,
+                    matched_with = list(chain.from_iterable(matched_with)) if matched_with[0] else None,
+                    matched_by=matched_by,
+                    evaluated_at=datetime.now(),
+                )
+            )
+        return inspected_prospects
+
+
+    def inspect_users_prospects(self) -> list[InspectedProspect]:
         """Select prospects based on user location settings."""
-        relevant_prospects_to_user: dict[str, dict[str, bool]] = defaultdict(dict)
+        relevant_prospects_to_user: dict[str, dict[str, dict[ProspectMatch, set[str]]]] = defaultdict(dict)
 
         # Caches user settings if user is already read.
         settings_cache: dict[str, UserLocationSettings] = {}
@@ -54,10 +115,8 @@ class InspectorService:
 
             user_settings = settings_cache[user_id]
             prospect_locations = [prospect.company_country, prospect.company_state]
-            is_relevant = (
-                    self._check_prospect_locations(user_settings, prospect_locations)
-                    or self._validate_region(user_settings, prospect_locations)
-            )
-            relevant_prospects_to_user[user_id][prospect.prospect_id] = is_relevant
+            matched_prospects = self._check_prospect_locations(user_settings, prospect_locations)
+            if matched_prospects:
+                relevant_prospects_to_user[user_id][prospect.prospect_id] = matched_prospects
 
-        return dict(relevant_prospects_to_user)
+        return self._create_inspected_prospects(relevant_prospects_to_user)
