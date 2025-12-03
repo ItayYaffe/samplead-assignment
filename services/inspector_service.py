@@ -87,7 +87,7 @@ class InspectorService:
         if not set(prospect_locations).isdisjoint(user_settings.location_exclude):
             return None
 
-        elif not set(prospect_locations).isdisjoint(user_settings.location_include):
+        if not set(prospect_locations).isdisjoint(user_settings.location_include):
             matches[ProspectMatch.DISTRICT] = set(prospect_locations).intersection(user_settings.location_include)
         elif not set(regions).isdisjoint(user_settings.location_include):
             matches[ProspectMatch.REGION] = set(regions).intersection(user_settings.location_include)
@@ -96,24 +96,25 @@ class InspectorService:
         return matches
 
     @staticmethod
-    def _create_inspected_prospects(relevant_prospects_to_user: dict[str, dict[str, dict[ProspectMatch, set[str]]]]) -> \
-    list[InspectedProspect]:
+    def _create_inspected_prospects(
+            relevant_prospects_to_user: dict[str, dict[str, dict[ProspectMatch, set[str]]]]
+    ) -> list[InspectedProspect]:
         """Create inspected prospect object"""
         inspected_prospects = []
         for user_id, prospect_status in relevant_prospects_to_user.items():
-            prospect_id = list(prospect_status.keys())[0]
-            matched_by = list(prospect_status[prospect_id].keys())
-            matched_with = list(prospect_status[prospect_id].values())
-            inspected_prospects.append(
-                InspectedProspect(
-                    user_id=user_id,
-                    prospect_id=prospect_id,
-                    qualifies=True if ProspectMatch.NONE not in matched_by else False,
-                    matched_with=list(chain.from_iterable(matched_with)) if matched_with[0] else None,
-                    matched_by=matched_by,
-                    evaluated_at=datetime.now(),
+            for prospect_id, matches_dict in prospect_status.items():
+                matched_by = list(matches_dict.keys())
+                matched_with = list(matches_dict.values())
+                inspected_prospects.append(
+                    InspectedProspect(
+                        user_id=user_id,
+                        prospect_id=prospect_id,
+                        qualifies=True if ProspectMatch.NONE not in matched_by else False,
+                        matched_with=list(chain.from_iterable(matched_with)) if matched_with[0] else None,
+                        matched_by=matched_by,
+                        evaluated_at=datetime.now(),
+                    )
                 )
-            )
         return inspected_prospects
 
     def inspect_users_prospects(self) -> list[InspectedProspect]:
